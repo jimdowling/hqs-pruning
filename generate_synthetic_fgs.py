@@ -229,10 +229,12 @@ def gen_fg3(fg0: pl.DataFrame, coverage: float, days: int, g: np.random.Generato
 
 FG_SPECS = [
     # (name, version, primary_key, event_time)
-    ("trans_crd_authrztn",     14, ["trans_key"],                "trans_dt"),
-    ("dbt_auth_sig_aggr",       9, ["trans_key"],                None),
-    ("dbt_trans_dly_aggr_crd",  4, ["acct_id", "drvd_trans_dt"], "drvd_trans_dt"),
-    ("nonmon_change_stats",     8, ["crd_num", "trans_dt"],      "trans_dt"),
+    # All FGs share a single version so repeated runs upsert into the
+    # same offline tables instead of accumulating new versions.
+    ("trans_crd_authrztn",     1, ["trans_key"],                "trans_dt"),
+    ("dbt_auth_sig_aggr",      1, ["trans_key"],                None),
+    ("dbt_trans_dly_aggr_crd", 1, ["acct_id", "drvd_trans_dt"], "drvd_trans_dt"),
+    ("nonmon_change_stats",    1, ["crd_num", "trans_dt"],      "trans_dt"),
 ]
 
 
@@ -314,31 +316,25 @@ def main() -> None:
     fg3 = gen_fg3(fg0, args.fg3_coverage, args.days, g)
     print(f"  fg3 ready in {time.time() - t:.1f}s ({fg3.height:,} rows)")
 
-    frames = {
-        "trans_crd_authrztn_14":    fg0,
-        "dbt_auth_sig_aggr_9":      fg1,
-        "dbt_trans_dly_aggr_crd_4": fg2,
-        "nonmon_change_stats_8":    fg3,
-    }
-
-    if args.mode == "parquet":
-        os.makedirs(args.out_dir, exist_ok=True)
-        for name, df in frames.items():
-            path = os.path.join(args.out_dir, f"{name}.parquet")
-            print(f"writing {path}")
-            df.write_parquet(path)
-        return
-
-    import hopsworks  # local import: parquet mode shouldn't require it
-    proj = hopsworks.login()
-    fs = proj.get_feature_store()
-
     fg_dfs = {
         "trans_crd_authrztn":     fg0,
         "dbt_auth_sig_aggr":      fg1,
         "dbt_trans_dly_aggr_crd": fg2,
         "nonmon_change_stats":    fg3,
     }
+
+    if args.mode == "parquet":
+        os.makedirs(args.out_dir, exist_ok=True)
+        for name, version, *_ in FG_SPECS:
+            path = os.path.join(args.out_dir, f"{name}_{version}.parquet")
+            print(f"writing {path}")
+            fg_dfs[name].write_parquet(path)
+        return
+
+    import hopsworks  # local import: parquet mode shouldn't require it
+    proj = hopsworks.login()
+    fs = proj.get_feature_store()
+
     for name, version, pk, evt in FG_SPECS:
         insert_to_hopsworks(fg_dfs[name], name, version, pk, evt, fs,
                             args.chunk_rows, args.time_travel_format)
