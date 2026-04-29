@@ -14,10 +14,12 @@ projected — join keys are pulled in implicitly by hsfs (PKs are auto-available
 for joining without being listed in `select(...)`), so they don't appear in
 the feature vector unless they were already in the projection list.
 
-`prefix=""` is passed on every join so right-side feature names are kept
-verbatim; this works because the projection lists are disjoint across the
-four FGs (the only shared physical columns are the join keys, which we
-deliberately exclude from the right-side projections).
+No `prefix=` argument is passed on the joins.  The server rejects an
+empty string, and leaving it unset means hsfs only auto-prefixes when
+there is an actual feature-name collision.  The four projection lists
+are disjoint and the right-side join keys (fg2.acct_id, fg3.crd_num,
+fg3.trans_dt) are *not* in their projection lists, so no auto-prefixing
+fires.
 
 Usage
 -----
@@ -84,26 +86,27 @@ def build_query(fs):
     fg2 = fs.get_feature_group("dbt_trans_dly_aggr_crd", 1)
     fg3 = fs.get_feature_group("nonmon_change_stats",    1)
 
+    # NB: do not pass prefix="" — the server rejects empty prefixes.
+    # Leaving prefix unset means hsfs only auto-prefixes on actual name
+    # clashes; the four projection lists are disjoint so no prefixes
+    # are added.
     return (
         fg0.select(FG0_FEATURES)
         .join(
             fg1.select(FG1_FEATURES),
             on=["trans_key"],
             join_type="left",
-            prefix="",
         )
         .join(
             fg2.select(FG2_FEATURES),
             left_on=["crd_num", "drvd_trans_dt"],
             right_on=["acct_id", "drvd_trans_dt"],
             join_type="left",
-            prefix="",
         )
         .join(
             fg3.select(FG3_FEATURES),
             on=["crd_num", "trans_dt"],
             join_type="left",
-            prefix="",
         )
     )
 
@@ -151,7 +154,6 @@ def main() -> None:
         logging_enabled=False,
     )
     print(f"feature view ready: {fv.name} v{fv.version} (id={fv.id})")
-    print(f"  https://{proj.host}/p/{proj.id}/fs/{fs.id}/fv/{fv.name}/version/{fv.version}")
 
 
 if __name__ == "__main__":
