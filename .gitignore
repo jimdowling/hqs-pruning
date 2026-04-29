@@ -1,0 +1,5 @@
+training_data/
+synthetic_fgs/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
