@@ -70,12 +70,16 @@ def main() -> None:
 
     t0 = time.perf_counter()
     if args.limit > 0:
-        # show() is the cheapest path: returns first N rows as nested lists
-        rows = q.show(args.limit)
+        # show() returns a pandas DataFrame on the python engine
+        df = q.show(args.limit)
         elapsed = time.perf_counter() - t0
-        print(f"got {len(rows):,} rows in {elapsed:.1f}s "
-              f"({len(rows) / elapsed:,.0f} rows/s)")
-        print(f"first row: {rows[0] if rows else '(empty)'}")
+        n = df.shape[0] if hasattr(df, "shape") else len(df)
+        print(f"got {n:,} rows in {elapsed:.1f}s "
+              f"({n / elapsed:,.0f} rows/s)")
+        if hasattr(df, "head"):
+            print(df.head())
+        else:
+            print(df[:3])
     else:
         df = q.read(dataframe_type="pandas")
         elapsed = time.perf_counter() - t0
