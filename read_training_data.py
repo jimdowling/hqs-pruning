@@ -15,11 +15,18 @@ labels land in `y_train` / `y_test`; otherwise the call returns
 Reports wall-clock time for login+metadata, the split read itself,
 the CSV save, plus per-split row counts and rows/s throughput.
 
+Pass `--measure-stats-overhead` to do *two* sequential reads — one
+with `statistics_config=False` and one with `statistics_config=True`
+— and print the delta as the cost of computing training-dataset
+statistics on this feature view.  The cache short-circuit is bypassed
+in this mode so the timing reflects a real fetch.
+
 Usage
 -----
     python read_training_data.py
     python read_training_data.py --test-size 0.2 --version 1
     python read_training_data.py --csv-dir /tmp/td_cache
+    python read_training_data.py --measure-stats-overhead
 """
 
 from __future__ import annotations
@@ -50,6 +57,10 @@ def main() -> None:
     p.add_argument("--csv-dir", default="./training_data",
                    help="Cache dir for X/y CSVs (default: ./training_data). "
                         "Existing CSVs are reused; a fresh FV read writes them.")
+    p.add_argument("--measure-stats-overhead", action="store_true",
+                   help="Read twice (statistics_config=False then True) and "
+                        "print the delta as the stats-computation overhead. "
+                        "Bypasses the CSV cache.")
     args = p.parse_args()
 
     if not 0.0 < args.test_size < 1.0:
@@ -58,9 +69,10 @@ def main() -> None:
     x_tr, x_te, y_tr, y_te = _csv_paths(args.csv_dir)
 
     # ------------------------------------------------------------------
-    # cache hit: load CSVs and stop
+    # cache hit: load CSVs and stop (skipped when measuring overhead)
     # ------------------------------------------------------------------
-    if os.path.exists(x_tr) and os.path.exists(x_te):
+    if (not args.measure_stats_overhead
+            and os.path.exists(x_tr) and os.path.exists(x_te)):
         import pandas as pd
         t0 = time.perf_counter()
         X_train = pd.read_csv(x_tr)
@@ -90,15 +102,29 @@ def main() -> None:
           f"{sum(1 for f in fv.features if f.label)} labels)  "
           f"[login+lookup {time.perf_counter() - t_login:.1f}s]")
 
-    print(f"materialising train/test split (test_size={args.test_size}) …")
-    t_split = time.perf_counter()
-    X_train, X_test, y_train, y_test = fv.train_test_split(
-        test_size=args.test_size,
-        description=args.description,
-        dataframe_type="pandas",
-        statistics_config=False,
-    )
-    split_secs = time.perf_counter() - t_split
+    def _read(stats: bool) -> tuple[float, tuple]:
+        t = time.perf_counter()
+        out = fv.train_test_split(
+            test_size=args.test_size,
+            description=args.description,
+            dataframe_type="pandas",
+            statistics_config=stats,
+        )
+        return time.perf_counter() - t, out
+
+    if args.measure_stats_overhead:
+        print("read 1/2 (statistics_config=False) …")
+        secs_no_stats, _ = _read(False)
+        print(f"  no-stats read: {secs_no_stats:.1f}s")
+        print("read 2/2 (statistics_config=True) …")
+        secs_with_stats, (X_train, X_test, y_train, y_test) = _read(True)
+        print(f"  with-stats read: {secs_with_stats:.1f}s")
+        print(f"  stats overhead: {secs_with_stats - secs_no_stats:+.1f}s "
+              f"({(secs_with_stats / secs_no_stats - 1) * 100:+.0f}%)")
+        split_secs = secs_with_stats
+    else:
+        print(f"materialising train/test split (test_size={args.test_size}) …")
+        split_secs, (X_train, X_test, y_train, y_test) = _read(False)
 
     n_train = len(X_train)
     n_test  = len(X_test)
