@@ -96,6 +96,7 @@ def main() -> None:
         test_size=args.test_size,
         description=args.description,
         dataframe_type="pandas",
+        statistics_config=False,
     )
     split_secs = time.perf_counter() - t_split
 
