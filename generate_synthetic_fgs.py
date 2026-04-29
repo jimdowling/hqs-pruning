@@ -238,15 +238,16 @@ FG_SPECS = [
 
 def insert_to_hopsworks(df: pl.DataFrame, name: str, version: int,
                         primary_key: list[str], event_time: str | None,
-                        fs, chunk_rows: int) -> None:
+                        fs, chunk_rows: int, time_travel_format: str) -> None:
     print(f"[hopsworks] {name}_{version}: {df.height:,} rows")
+    ttf = None if time_travel_format == "NONE" else time_travel_format
     fg = fs.get_or_create_feature_group(
         name=name,
         version=version,
         primary_key=primary_key,
         event_time=event_time,
         online_enabled=False,
-        time_travel_format="DELTA",
+        time_travel_format=ttf,
     )
     if chunk_rows <= 0 or df.height <= chunk_rows:
         fg.insert(df, write_options={"wait_for_job": True})
@@ -282,6 +283,8 @@ def main() -> None:
                    help="Parquet output directory when --mode parquet")
     p.add_argument("--chunk-rows",   type=int,   default=2_000_000,
                    help="Insertion chunk size for hopsworks mode (default: 2,000,000)")
+    p.add_argument("--time-travel-format", choices=["HUDI", "DELTA", "NONE"], default="HUDI",
+                   help="Feature group time-travel format (default: HUDI; cluster may lack DELTA libs)")
     args = p.parse_args()
 
     g = np.random.default_rng(args.seed)
@@ -337,7 +340,8 @@ def main() -> None:
         "nonmon_change_stats":    fg3,
     }
     for name, version, pk, evt in FG_SPECS:
-        insert_to_hopsworks(fg_dfs[name], name, version, pk, evt, fs, args.chunk_rows)
+        insert_to_hopsworks(fg_dfs[name], name, version, pk, evt, fs,
+                            args.chunk_rows, args.time_travel_format)
 
 
 if __name__ == "__main__":
