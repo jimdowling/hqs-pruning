@@ -8,6 +8,9 @@ If the feature view was created with `--label final_fraud_flag`, the labels
 land in `y_train` / `y_test`; otherwise the call returns `(X_train, X_test,
 None, None)`, so the script just concatenates X+y when y is present.
 
+Reports wall-clock time for login+metadata, the split read itself, optional
+parquet save, plus per-split row counts and rows/s throughput.
+
 Usage
 -----
     python read_training_data.py
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 
 
 def main() -> None:
@@ -39,22 +43,31 @@ def main() -> None:
     if not 0.0 < args.test_size < 1.0:
         raise SystemExit(f"--test-size must be in (0, 1); got {args.test_size}")
 
+    t_login = time.perf_counter()
     import hopsworks
     proj = hopsworks.login()
     fs = proj.get_feature_store()
-
     fv = fs.get_feature_view(name=args.name, version=args.version)
     print(f"feature view: {fv.name} v{fv.version} "
           f"({len(fv.features)} features, "
-          f"{sum(1 for f in fv.features if f.label)} labels)")
+          f"{sum(1 for f in fv.features if f.label)} labels)  "
+          f"[login+lookup {time.perf_counter() - t_login:.1f}s]")
 
     print(f"materialising train/test split (test_size={args.test_size}) …")
+    t_split = time.perf_counter()
     X_train, X_test, y_train, y_test = fv.train_test_split(
         test_size=args.test_size,
         description=args.description,
         dataframe_type="pandas",
     )
+    split_secs = time.perf_counter() - t_split
 
+    n_train = len(X_train)
+    n_test  = len(X_test)
+    n_total = n_train + n_test
+    print(f"split read in {split_secs:.1f}s "
+          f"({n_total:,} rows total → {n_train:,} train + {n_test:,} test, "
+          f"{n_total / split_secs:,.0f} rows/s)")
     print(f"X_train: {X_train.shape}  X_test: {X_test.shape}")
     if y_train is not None:
         print(f"y_train: {y_train.shape}  y_test: {y_test.shape}")
@@ -64,6 +77,7 @@ def main() -> None:
 
     if args.save_dir:
         os.makedirs(args.save_dir, exist_ok=True)
+        t_save = time.perf_counter()
         X_train.to_parquet(os.path.join(args.save_dir, "X_train.parquet"))
         X_test.to_parquet(os.path.join(args.save_dir,  "X_test.parquet"))
         if y_train is not None:
@@ -71,7 +85,10 @@ def main() -> None:
                 os.path.join(args.save_dir, "y_train.parquet"))
             y_test.to_frame().to_parquet(
                 os.path.join(args.save_dir, "y_test.parquet"))
-        print(f"saved to {args.save_dir}/")
+        print(f"saved to {args.save_dir}/ "
+              f"[{time.perf_counter() - t_save:.1f}s]")
+
+    print(f"total elapsed: {time.perf_counter() - t_login:.1f}s")
 
 
 if __name__ == "__main__":
